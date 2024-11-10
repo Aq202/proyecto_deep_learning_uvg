@@ -20,12 +20,28 @@ class DQN(nn.Module):
         return self.fc3(x)
 
 class Obstacle:
-    def __init__(self, x, height, width, is_bird=False):
+    def __init__(self, x, height, width, is_bird=False, image=None):
         self.x = x
         self.height = height
         self.width = width
         self.is_bird = is_bird
         self.y = 0 if is_bird else None
+        self.image = image
+        
+class Cloud:
+    def __init__(self, x, y, image):
+        self.x = x
+        self.y = y
+        self.image = image
+        self.speed = 1  # Velocidad de desplazamiento de la nube hacia la izquierda
+
+    def update(self):
+        # Mueve la nube hacia la izquierda
+        self.x -= self.speed
+        # Reposiciona la nube si se ha salido de la pantalla
+        if self.x < -self.image.get_width():
+            self.x = 800 + random.randint(50, 200)  # Reposiciona a la derecha de la pantalla
+            self.y = random.randint(50, 150)  # Genera una nueva altura
 
 class DinoGame:
     def __init__(self):
@@ -35,16 +51,67 @@ class DinoGame:
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption('Dino Game')
         
+        # Cargar la imagen del piso
+        self.ground_img = pygame.image.load('assets/ground.png').convert_alpha()
+        self.ground_img = pygame.transform.scale(self.ground_img, (self.width, self.ground_img.get_height()))
+        
+        # Posición inicial del piso para el bucle
+        self.ground_x1 = 0
+        self.ground_x2 = self.width  # Segunda imagen a la derecha de la primera
+        
+        # Cargar imágenes del dinosaurio
+        self.dino_run_imgs = [
+            pygame.image.load('assets/dino_run1.png').convert_alpha(),
+            pygame.image.load('assets/dino_run2.png').convert_alpha()
+        ]
+        
+        self.dino_duck_imgs = [
+            pygame.image.load('assets/dino_duck1.png').convert_alpha(),
+            pygame.image.load('assets/dino_duck2.png').convert_alpha()
+        ]
+        
+        # Cargar imágenes de obstáculos
+        self.cactus_imgs = [
+            pygame.image.load('assets/cactus1.png').convert_alpha(),
+            pygame.image.load('assets/cactus2.png').convert_alpha(),
+            pygame.image.load('assets/cactus3.png').convert_alpha(),
+            pygame.image.load('assets/cactus4.png').convert_alpha(),
+            pygame.image.load('assets/cactus5.png').convert_alpha(),
+            pygame.image.load('assets/cactus6.png').convert_alpha()
+        ]
+        
+        self.bird_imgs = [
+            pygame.image.load('assets/bird1.png').convert_alpha(),
+            pygame.image.load('assets/bird2.png').convert_alpha()
+        ]
+        
+        # Cargar la imagen de la nube
+        self.cloud_img = pygame.image.load('assets/cloud.png').convert_alpha()
+        
+        # Escalar la imagen de la nube
+        self.cloud_img = pygame.transform.scale(self.cloud_img, 
+                                                (int(self.cloud_img.get_width() * 3), 
+                                                int(self.cloud_img.get_height() * 3)))
+        
+        # Crear una lista de nubes
+        self.clouds = [Cloud(random.randint(800, 1600), random.randint(50, 150), self.cloud_img)
+                       for _ in range(3)]  # Crea 3 nubes
+        
         # Dinosaur configuration
         self.dino_height = 40
         self.dino_width = 20
         self.dino_x = 50
-        self.dino_y = self.height - self.dino_height
+        self.dino_y = self.height - self.dino_run_imgs[0].get_height()
         self.dino_vel = 0
         self.jump_vel = -15
         self.gravity = 0.8
         self.is_ducking = False
         self.duck_height = self.dino_height // 2
+        
+        # Índices para animaciones
+        self.dino_run_index = 0
+        self.dino_duck_index = 0
+        self.bird_index = 0
         
         # Obstaculos
         self.obstacles = []
@@ -138,14 +205,13 @@ class DinoGame:
         is_bird = random.random() < 0.2
         
         if is_bird:
-            height = 30
-            width = 30
-            obstacle = Obstacle(self.width, height, width, is_bird=True)
+            obstacle_img = self.bird_imgs[0]
+            obstacle = Obstacle(self.width, obstacle_img.get_height(), obstacle_img.get_width(), is_bird=True, image=obstacle_img)
+            obstacle.y = random.choice(self.bird_heights)
             obstacle.y = random.choice(self.bird_heights)
         else:
-            height = random.randint(30, 60)
-            width = 20
-            obstacle = Obstacle(self.width, height, width, is_bird=False)
+            obstacle_img = random.choice(self.cactus_imgs)
+            obstacle = Obstacle(self.width, obstacle_img.get_height(), obstacle_img.get_width(), is_bird=False, image=obstacle_img)
         
         self.obstacles.append(obstacle)
         self.last_obstacle_x = self.width
@@ -196,18 +262,19 @@ class DinoGame:
         return self._get_state(), reward, self.game_over
     
     def _check_collision(self):
-        dino_height = self.duck_height if self.is_ducking else self.dino_height
-        dino_rect = pygame.Rect(self.dino_x, self.dino_y, self.dino_width, dino_height)
+        if self.is_ducking:
+            dino_img = self.dino_duck_imgs[0]
+        else:
+            dino_img = self.dino_run_imgs[0]
+        dino_rect = dino_img.get_rect(topleft=(self.dino_x, self.dino_y))
         
         for obstacle in self.obstacles:
+            obstacle_rect = obstacle.image.get_rect()
             if obstacle.is_bird:
-                obstacle_rect = pygame.Rect(obstacle.x, obstacle.y,
-                                            obstacle.width, obstacle.height)
+                obstacle_rect.topleft = (obstacle.x, obstacle.y)
             else:
-                obstacle_rect = pygame.Rect(obstacle.x,
-                                            self.height - obstacle.height,
-                                            obstacle.width, obstacle.height)
-            
+                obstacle_rect.bottomleft = (obstacle.x, self.height)
+
             if dino_rect.colliderect(obstacle_rect):
                 return True
         return False
@@ -215,21 +282,45 @@ class DinoGame:
     def render(self):
         self.screen.fill((255, 255, 255))
         
+        # Dibujar las nubes en el fondo
+        for cloud in self.clouds:
+            cloud.update()
+            self.screen.blit(cloud.image, (cloud.x, cloud.y))
+            
+        # Dibujar el piso con desplazamiento infinito
+        self.ground_x1 -= self.current_speed
+        self.ground_x2 -= self.current_speed
+        
+        # Si una imagen del piso sale de la pantalla, reubicarla al extremo derecho
+        if self.ground_x1 <= -self.width:
+            self.ground_x1 = self.width
+        if self.ground_x2 <= -self.width:
+            self.ground_x2 = self.width
+
+        # Dibujar ambas imágenes del piso para crear el efecto de bucle
+        self.screen.blit(self.ground_img, (self.ground_x1, self.height - self.ground_img.get_height()))
+        self.screen.blit(self.ground_img, (self.ground_x2, self.height - self.ground_img.get_height()))
+        
+        # Actualizar índice de animación del dinosaurio
+        if self.is_ducking:
+            self.dino_duck_index = (self.dino_duck_index + 0.2) % len(self.dino_duck_imgs)
+            dino_img = self.dino_duck_imgs[int(self.dino_duck_index)]
+        else:
+            self.dino_run_index = (self.dino_run_index + 0.2) % len(self.dino_run_imgs)
+            dino_img = self.dino_run_imgs[int(self.dino_run_index)]
+        
         # Dibujar al dinosaurio
-        dino_height = self.duck_height if self.is_ducking else self.dino_height
-        pygame.draw.rect(self.screen, (0, 0, 0),
-                        (self.dino_x, self.dino_y, self.dino_width, dino_height))
+        self.screen.blit(dino_img, (self.dino_x, self.dino_y))
         
         # Dibujar los obstáculos
         for obstacle in self.obstacles:
             if obstacle.is_bird:
-                pygame.draw.rect(self.screen, (255, 0, 0),
-                                (obstacle.x, obstacle.y,
-                                obstacle.width, obstacle.height))
+                # Animación del ave
+                self.bird_index = (self.bird_index + 0.1) % len(self.bird_imgs)
+                obstacle.image = self.bird_imgs[int(self.bird_index)]
+                self.screen.blit(obstacle.image, (obstacle.x, obstacle.y))
             else:
-                pygame.draw.rect(self.screen, (0, 0, 0),
-                                (obstacle.x, self.height - obstacle.height,
-                                obstacle.width, obstacle.height))
+                self.screen.blit(obstacle.image, (obstacle.x, self.height - obstacle.image.get_height()))
         
         # Dibujar labels de score y velocidad
         font = pygame.font.Font(None, 36)
