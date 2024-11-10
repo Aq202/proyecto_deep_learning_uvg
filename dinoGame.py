@@ -58,7 +58,7 @@ class DinoGame:
         # Dificultad del juego
         self.base_speed = 5
         self.current_speed = self.base_speed
-        self.speed_increment = 0.0005
+        self.speed_increment = 0.05
         self.max_speed = 12
         
         self.score = 0
@@ -255,7 +255,7 @@ class DQNAgent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
         self.learning_rate = 0.001
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=100000000)
         
         self.model = DQN(state_size, action_size)
         self.target_model = DQN(state_size, action_size)
@@ -308,7 +308,7 @@ def train_dino():
     state_size = 12
     action_size = 3
     agent = DQNAgent(state_size, action_size)
-    batch_size = 32
+    batch_size = 128
     episodes = 1000
     
     try:
