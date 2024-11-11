@@ -402,6 +402,8 @@ def train_dino():
     batch_size = 128
     episodes = 1000
     
+    best_score = -float('inf')
+    
     try:
         for episode in range(episodes):
             state = env.reset()
@@ -427,6 +429,12 @@ def train_dino():
                     agent.update_target_model()
             
             print(f"Episodio: {episode + 1}, Score: {total_reward}, Epsilon: {agent.epsilon}")
+            
+            if total_reward > best_score:
+                best_score = total_reward
+                torch.save(agent.model.state_dict(), 'best_dino_model.pth')  # Guarda el modelo
+                
+                print(f"Nuevo mejor modelo guardado con puntaje: {total_reward}")
     
     except KeyboardInterrupt:
         print("\nEntrenamiento interrumpido por el usuario")
