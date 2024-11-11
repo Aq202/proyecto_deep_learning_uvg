@@ -7,13 +7,19 @@ import torch.optim as optim
 from collections import deque
 import torch.nn.functional as F
 
+random.seed(42)
+torch.manual_seed(42)
+np.random.seed(42)
+
+
 class DQN(nn.Module):
     def __init__(self, input_size, output_size):
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(input_size, 128)
         self.fc2 = nn.Linear(128, 128)
         self.fc3 = nn.Linear(128, output_size)
-
+        
+    
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -95,7 +101,7 @@ class DinoGame:
         
         # Crear una lista de nubes
         self.clouds = [Cloud(random.randint(800, 1600), random.randint(50, 150), self.cloud_img)
-                       for _ in range(3)]  # Crea 3 nubes
+                        for _ in range(3)]  # Crea 3 nubes
         
         # Dinosaur configuration
         self.dino_height = 40
@@ -132,6 +138,7 @@ class DinoGame:
         self.game_over = False
         self.clock = pygame.time.Clock()
         self.paused = False
+        self.bestScore = 0
     
     def handle_events(self):
         pygame.event.pump()
@@ -170,17 +177,15 @@ class DinoGame:
                 state.extend([
                     obs.x - self.dino_x,
                     obs.height,
-                    1 if obs.is_bird else 0,
-                    obs.y if obs.is_bird else self.height - obs.height
+                    obs.y if obs.is_bird else 0 # Posición relativa al suelo
                 ])
             else:
-                state.extend([self.width, 0, 0, 0])
+                state.extend([self.width, 0, 0])
         
         # Agregar stado del dinosaurio
         state.extend([
             self.dino_y,
             self.dino_vel,
-            1 if self.is_ducking else 0,
             self.current_speed
         ])
         
@@ -255,9 +260,14 @@ class DinoGame:
         if self._can_spawn_obstacle():
             self._spawn_obstacle()
         
-        if self._check_collision():
+        collitionObstacle = self._check_collision()
+        if collitionObstacle is not None:
             reward = -10.0
             self.game_over = True
+            
+            # Si choca con cactus estándo agachado o en el piso, mayor penalización
+            if not collitionObstacle.is_bird and (self.is_ducking or self.dino_y >= self.height - self.dino_height):
+                reward -= 2.0
         
         return self._get_state(), reward, self.game_over
     
@@ -276,8 +286,8 @@ class DinoGame:
                 obstacle_rect.bottomleft = (obstacle.x, self.height)
 
             if dino_rect.colliderect(obstacle_rect):
-                return True
-        return False
+                return obstacle
+        return None
     
     def render(self):
         self.screen.fill((255, 255, 255))
@@ -326,8 +336,10 @@ class DinoGame:
         font = pygame.font.Font(None, 36)
         score_text = font.render(f'Score: {self.score}', True, (0, 0, 0))
         speed_text = font.render(f'Speed: {self.current_speed:.1f}', True, (0, 0, 0))
+        bestscore_text = font.render(f'Best Score: {self.bestScore}', True, (0, 0, 0))
         self.screen.blit(score_text, (10, 10))
         self.screen.blit(speed_text, (10, 40))
+        self.screen.blit(bestscore_text, (self.width - 200, 10))
         
         if self.paused:
             pause_text = font.render('PAUSED', True, (255, 0, 0))
@@ -343,27 +355,24 @@ class DQNAgent:
         self.action_size = action_size
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.9995
         self.learning_rate = 0.001
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=200000)
         
-        # Modelo y modelo objetivo
         self.model = DQN(state_size, action_size)
         self.target_model = DQN(state_size, action_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-
-        # Actualiza modelo objetivo periódicamente
+        
         self.update_target_model()
-
+    
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
-
+    
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
-
+    
     def act(self, state):
-        # Selección de acción: exploración vs. explotación
         if random.random() <= self.epsilon:
             return random.randrange(self.action_size)
         
@@ -371,9 +380,8 @@ class DQNAgent:
             state = torch.FloatTensor(state).unsqueeze(0)
             act_values = self.model(state)
             return torch.argmax(act_values).item()
-
+    
     def replay(self, batch_size):
-        # Actualiza el modelo con batch de memoria
         if len(self.memory) < batch_size:
             return
         
@@ -389,61 +397,66 @@ class DQNAgent:
         with torch.no_grad():
             max_next_q = self.target_model(next_states).max(1)[0]
             target_q = rewards + (1 - dones) * self.gamma * max_next_q
-
+        
         loss = F.mse_loss(current_q.squeeze(), target_q)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         
-        # Decae epsilon más lentamente
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
 def train_dino():
     env = DinoGame()
-    state_size = 12
+    state_size = 9
     action_size = 3
     agent = DQNAgent(state_size, action_size)
-    batch_size = 64
+    batch_size = 32
     episodes = 1000
-    best_score = -float('inf')
-
-    for episode in range(episodes):
-        state = env.reset()
-        total_reward = 0
-
-        while not env.game_over:
-            action = agent.act(state)
-            next_state, reward, done = env.step(action)
+    
+    bestScore = 0
+    try:
+        for episode in range(episodes):
+            state = env.reset()
+            total_reward = 0
             
-            # Premios incrementales por mantenerse vivo
-            if not done:
-                reward += 0.05  
+            while not env.game_over:
+                action = agent.act(state)
+                next_state, reward, done = env.step(action)
                 
-            # Penalización por acciones repetitivas en el mismo estado
-            if state.tolist() == next_state.tolist() and reward == 0.1:
-                reward = -0.2  
-
-            total_reward += reward
-            agent.remember(state, action, reward, next_state, done)
-
-            # Llama replay() con menor frecuencia
-            if len(agent.memory) >= batch_size:
-                agent.replay(batch_size)
+                if done and not env.paused:
+                    total_reward += reward
+                    agent.remember(state, action, reward, next_state, done)
+                    agent.replay(batch_size)
+                elif not env.paused:
+                    total_reward += reward
+                    agent.remember(state, action, reward, next_state, done)
+                    agent.replay(batch_size)
+                
+                state = next_state
+                env.render()           
+                
+                if episode % 10 == 0:
+                    
+                    agent.update_target_model()
+                    
+                if env.score > bestScore:
+                    bestScore = env.score
+                    env.bestScore = bestScore
             
-            state = next_state
-            env.render()
-
-            if done:
-                agent.update_target_model()
-
-        # Guardar modelo si tiene un mejor puntaje
-        if total_reward > best_score:
-            best_score = total_reward
-            torch.save(agent.model.state_dict(), 'best_dino_model.pth')
-            print(f"Mejor modelo guardado con puntaje: {total_reward}")
+            print(f"Episodio: {episode + 1}, Score: {total_reward}, Epsilon: {agent.epsilon}, Memoria: {len(agent.memory)}")
+            
         
-        print(f"Episodio: {episode + 1}, Puntaje: {total_reward}, Epsilon: {agent.epsilon}")
+            # Guardar modelo si tiene un mejor puntaje
+            if total_reward > bestScore:
+                bestScore = total_reward
+                torch.save(agent.model.state_dict(), 'best_dino_model.pth')
+                print(f"Mejor modelo guardado con puntaje: {total_reward}")
+    
+    except KeyboardInterrupt:
+        print("\nEntrenamiento interrumpido por el usuario")
+    finally:
+        pygame.quit()
 
 if __name__ == "__main__":
     train_dino()

@@ -5,7 +5,7 @@ from dinoGame import DinoGame, DQNAgent  # Importa tu agente DQN
 def load_and_play():
     # Cargar el juego y el modelo
     env = DinoGame()
-    state_size = 12
+    state_size = 9
     action_size = 3
     agent = DQNAgent(state_size, action_size)
     
