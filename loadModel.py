@@ -10,7 +10,8 @@ def load_and_play():
     agent = DQNAgent(state_size, action_size)
     
     # Cargar los pesos del modelo
-    agent.model.load_state_dict(torch.load('best_dino_model.pth'))
+    #agent.model.load_state_dict(torch.load('models/best_dino_model_ep_117_reward_213_score_180.pth'))
+    agent.model.load_state_dict(torch.load('models/best_dino_model_ep_152_reward_129.pth'))
     agent.model.eval()  # Poner el modelo en modo evaluación
 
     # Configurar sin exploración

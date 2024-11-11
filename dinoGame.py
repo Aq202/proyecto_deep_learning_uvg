@@ -7,10 +7,11 @@ import torch.optim as optim
 from collections import deque
 import torch.nn.functional as F
 
-random.seed(42)
-torch.manual_seed(42)
-np.random.seed(42)
+# random.seed(50)
+# torch.manual_seed(50)
+# np.random.seed(50)
 
+randomStartPoint = True
 
 class DQN(nn.Module):
     def __init__(self, input_size, output_size):
@@ -121,10 +122,10 @@ class DinoGame:
         
         # Obstaculos
         self.obstacles = []
-        self.bird_heights = [self.height - 120, self.height - 80] # Altura permitida de pájaros
+        self.bird_heights = [self.height - 140, self.height - 120, self.height - 80, self.height - 50] # Altura permitida de pájaros
         
         # Espacio mínimo entre obstáculos
-        self.absolute_min_spacing = 400
+        self.absolute_min_spacing = 300
         self.last_obstacle_x = None
         self.max_obstacles = 2
         
@@ -132,7 +133,7 @@ class DinoGame:
         self.base_speed = 5
         self.current_speed = self.base_speed
         self.speed_increment = 0.05
-        self.max_speed = 12
+        self.max_speed = 15
         
         self.score = 0
         self.game_over = False
@@ -158,7 +159,10 @@ class DinoGame:
         self.dino_y = self.height - self.dino_height
         self.dino_vel = 0
         self.obstacles = []
-        self.score = 0
+        if randomStartPoint:
+            self.score = int((random.randint(self.base_speed, self.max_speed) - self.base_speed) / self.speed_increment)
+        else:
+            self.score = 0
         self.game_over = False
         self.paused = False
         self.current_speed = self.base_speed
@@ -225,7 +229,7 @@ class DinoGame:
         if not self.handle_events() or self.paused:
             return self._get_state(), 0, True
 
-        reward = 0.1
+        reward = 0.01
         
         if action == 1 and self.dino_y >= self.height - self.dino_height:
             self.dino_vel = self.jump_vel
@@ -253,21 +257,30 @@ class DinoGame:
                 self.obstacles.remove(obstacle)
                 any_obstacle_passed = True
         
+        # Premio por pasar obstáculo
         if any_obstacle_passed:
             self.score += 1
-            reward = 1.0
+            reward = 5.0
+            
+        # Castigar por saltar
+        if action == 1:
+            reward -= 0.3
+            
+        # Premio por no actuar
+        if action == 0:
+            reward += 0.1
         
         if self._can_spawn_obstacle():
             self._spawn_obstacle()
         
         collitionObstacle = self._check_collision()
         if collitionObstacle is not None:
-            reward = -10.0
+            reward = -20.0
             self.game_over = True
             
             # Si choca con cactus estándo agachado o en el piso, mayor penalización
             if not collitionObstacle.is_bird and (self.is_ducking or self.dino_y >= self.height - self.dino_height):
-                reward -= 2.0
+                reward -= 10.0
         
         return self._get_state(), reward, self.game_over
     
@@ -358,7 +371,7 @@ class DQNAgent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.9995
         self.learning_rate = 0.001
-        self.memory = deque(maxlen=200000)
+        self.memory = deque(maxlen=10000000)
         
         self.model = DQN(state_size, action_size)
         self.target_model = DQN(state_size, action_size)
@@ -383,7 +396,7 @@ class DQNAgent:
     
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
-            return
+            return None
         
         minibatch = random.sample(self.memory, batch_size)
         states = torch.FloatTensor([t[0] for t in minibatch])
@@ -405,20 +418,36 @@ class DQNAgent:
         
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
+        
+        return loss.item()
 
+def load_model(model, filename):
+    model.load_state_dict(torch.load(filename))
+        
 def train_dino():
     env = DinoGame()
     state_size = 9
     action_size = 3
     agent = DQNAgent(state_size, action_size)
     batch_size = 32
-    episodes = 1000
+    episodes = 10000
     
     bestScore = 0
+    bestReward = 0
+    
+    # Listas para almacenar métricas
+    episode_rewards = []
+    episode_losses = []
+    episode_epsilons = []
+    episode_lengths = []
+    
     try:
         for episode in range(episodes):
             state = env.reset()
             total_reward = 0
+            total_loss = 0
+            steps_in_episode = 0
+            step = 0
             
             while not env.game_over:
                 action = agent.act(state)
@@ -427,31 +456,52 @@ def train_dino():
                 if done and not env.paused:
                     total_reward += reward
                     agent.remember(state, action, reward, next_state, done)
-                    agent.replay(batch_size)
+                    loss = agent.replay(batch_size)
                 elif not env.paused:
                     total_reward += reward
                     agent.remember(state, action, reward, next_state, done)
-                    agent.replay(batch_size)
+                    loss = agent.replay(batch_size)
+                
+                if loss is not None:
+                    total_loss += loss
+                    step += 1
+                    
+                steps_in_episode += 1
                 
                 state = next_state
                 env.render()           
                 
                 if episode % 10 == 0:
-                    
                     agent.update_target_model()
                     
                 if env.score > bestScore:
                     bestScore = env.score
                     env.bestScore = bestScore
+                
+                if steps_in_episode > 50000:
+                    break
             
             print(f"Episodio: {episode + 1}, Score: {total_reward}, Epsilon: {agent.epsilon}, Memoria: {len(agent.memory)}")
             
+            # Calcular pérdida promedio por episodio
+            avg_loss = total_loss / step if step > 0 else 0
+            episode_rewards.append(total_reward)
+            episode_losses.append(avg_loss)
+            episode_epsilons.append(agent.epsilon)
+            episode_lengths.append(steps_in_episode)
+            
+            if steps_in_episode > 0 and len(episode_rewards) % 20 == 0:
+                # Guardar datos en archivos metrics.txt
+                with open(f'metrics.txt', 'w') as f:
+                    f.write("reward,loss,epsilon,length\n")
+                    for i in range(len(episode_rewards)):
+                        f.write(f"{episode_rewards[i]},{episode_losses[i]},{episode_epsilons[i]},{episode_lengths[i]}\n")
         
             # Guardar modelo si tiene un mejor puntaje
-            if total_reward > bestScore:
-                bestScore = total_reward
-                torch.save(agent.model.state_dict(), 'best_dino_model.pth')
-                print(f"Mejor modelo guardado con puntaje: {total_reward}")
+            if (total_reward > bestReward and total_reward > 10):
+                bestReward = total_reward
+                torch.save(agent.model.state_dict(), f'models/best_dino_model_ep_{episode}_reward_{int(bestReward)}.pth')
+                print(f"Mejor modelo guardado con reward: {total_reward}")
     
     except KeyboardInterrupt:
         print("\nEntrenamiento interrumpido por el usuario")
