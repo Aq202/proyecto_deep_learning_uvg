@@ -13,7 +13,7 @@ class DQN(nn.Module):
         self.fc1 = nn.Linear(input_size, 128)
         self.fc2 = nn.Linear(128, 128)
         self.fc3 = nn.Linear(128, output_size)
-    
+
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -343,24 +343,27 @@ class DQNAgent:
         self.action_size = action_size
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.epsilon_min = 0.01
+        self.epsilon_min = 0.05
         self.epsilon_decay = 0.995
         self.learning_rate = 0.001
-        self.memory = deque(maxlen=100000000)
+        self.memory = deque(maxlen=10000)
         
+        # Modelo y modelo objetivo
         self.model = DQN(state_size, action_size)
         self.target_model = DQN(state_size, action_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        
+
+        # Actualiza modelo objetivo periódicamente
         self.update_target_model()
-    
+
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
-    
+
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
-    
+
     def act(self, state):
+        # Selección de acción: exploración vs. explotación
         if random.random() <= self.epsilon:
             return random.randrange(self.action_size)
         
@@ -368,8 +371,9 @@ class DQNAgent:
             state = torch.FloatTensor(state).unsqueeze(0)
             act_values = self.model(state)
             return torch.argmax(act_values).item()
-    
+
     def replay(self, batch_size):
+        # Actualiza el modelo con batch de memoria
         if len(self.memory) < batch_size:
             return
         
@@ -385,12 +389,13 @@ class DQNAgent:
         with torch.no_grad():
             max_next_q = self.target_model(next_states).max(1)[0]
             target_q = rewards + (1 - dones) * self.gamma * max_next_q
-        
+
         loss = F.mse_loss(current_q.squeeze(), target_q)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         
+        # Decae epsilon más lentamente
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
@@ -399,47 +404,46 @@ def train_dino():
     state_size = 12
     action_size = 3
     agent = DQNAgent(state_size, action_size)
-    batch_size = 128
+    batch_size = 64
     episodes = 1000
-    
     best_score = -float('inf')
-    
-    try:
-        for episode in range(episodes):
-            state = env.reset()
-            total_reward = 0
+
+    for episode in range(episodes):
+        state = env.reset()
+        total_reward = 0
+
+        while not env.game_over:
+            action = agent.act(state)
+            next_state, reward, done = env.step(action)
             
-            while not env.game_over:
-                action = agent.act(state)
-                next_state, reward, done = env.step(action)
+            # Premios incrementales por mantenerse vivo
+            if not done:
+                reward += 0.05  
                 
-                if done and not env.paused:
-                    total_reward += reward
-                    agent.remember(state, action, reward, next_state, done)
-                    agent.replay(batch_size)
-                elif not env.paused:
-                    total_reward += reward
-                    agent.remember(state, action, reward, next_state, done)
-                    agent.replay(batch_size)
-                
-                state = next_state
-                env.render()
-                
-                if episode % 10 == 0:
-                    agent.update_target_model()
+            # Penalización por acciones repetitivas en el mismo estado
+            if state.tolist() == next_state.tolist() and reward == 0.1:
+                reward = -0.2  
+
+            total_reward += reward
+            agent.remember(state, action, reward, next_state, done)
+
+            # Llama replay() con menor frecuencia
+            if len(agent.memory) >= batch_size:
+                agent.replay(batch_size)
             
-            print(f"Episodio: {episode + 1}, Score: {total_reward}, Epsilon: {agent.epsilon}")
-            
-            if total_reward > best_score:
-                best_score = total_reward
-                torch.save(agent.model.state_dict(), 'best_dino_model.pth')  # Guarda el modelo
-                
-                print(f"Nuevo mejor modelo guardado con puntaje: {total_reward}")
-    
-    except KeyboardInterrupt:
-        print("\nEntrenamiento interrumpido por el usuario")
-    finally:
-        pygame.quit()
+            state = next_state
+            env.render()
+
+            if done:
+                agent.update_target_model()
+
+        # Guardar modelo si tiene un mejor puntaje
+        if total_reward > best_score:
+            best_score = total_reward
+            torch.save(agent.model.state_dict(), 'best_dino_model.pth')
+            print(f"Mejor modelo guardado con puntaje: {total_reward}")
+        
+        print(f"Episodio: {episode + 1}, Puntaje: {total_reward}, Epsilon: {agent.epsilon}")
 
 if __name__ == "__main__":
     train_dino()
