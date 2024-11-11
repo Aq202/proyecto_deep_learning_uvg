@@ -11,7 +11,7 @@ import torch.nn.functional as F
 # torch.manual_seed(50)
 # np.random.seed(50)
 
-randomStartPoint = True
+randomStartPoint = False
 
 class DQN(nn.Module):
     def __init__(self, input_size, output_size):
@@ -122,10 +122,10 @@ class DinoGame:
         
         # Obstaculos
         self.obstacles = []
-        self.bird_heights = [self.height - 140, self.height - 120, self.height - 80, self.height - 50] # Altura permitida de pájaros
+        self.bird_heights = [self.height - 120, self.height - 80] # Altura permitida de pájaros
         
         # Espacio mínimo entre obstáculos
-        self.absolute_min_spacing = 300
+        self.absolute_min_spacing = 400
         self.last_obstacle_x = None
         self.max_obstacles = 2
         
@@ -160,7 +160,7 @@ class DinoGame:
         self.dino_vel = 0
         self.obstacles = []
         if randomStartPoint:
-            self.score = int((random.randint(self.base_speed, self.max_speed) - self.base_speed) / self.speed_increment)
+            self.score = int((random.randint(self.base_speed, 12) - self.base_speed) / self.speed_increment)
         else:
             self.score = 0
         self.game_over = False
