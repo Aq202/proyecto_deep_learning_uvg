@@ -5,12 +5,13 @@ from dinoGame import DinoGame, DQNAgent  # Importa tu agente DQN
 def load_and_play():
     # Cargar el juego y el modelo
     env = DinoGame()
-    state_size = 12
+    state_size = 9
     action_size = 3
     agent = DQNAgent(state_size, action_size)
     
     # Cargar los pesos del modelo
-    agent.model.load_state_dict(torch.load('best_dino_model.pth'))
+    #agent.model.load_state_dict(torch.load('models/best_dino_model_ep_117_reward_213_score_180.pth'))
+    agent.model.load_state_dict(torch.load('models/best_dino_model_ep_152_reward_129.pth'))
     agent.model.eval()  # Poner el modelo en modo evaluación
 
     # Configurar sin exploración
